@@ -12,7 +12,7 @@ def build_generator(batch_size, latent_dim, intermediate_dims, original_dim, opt
     Z = Input(batch_shape=(batch_size, latent_dim), name='Z')
     H = Z
     intermediate_dims = intermediate_dims if intermediate_dims is not None else []
-    for intermediate_dim in intermediate_dims:
+    for i, intermediate_dim in enumerate(intermediate_dims):
         H = Dense(intermediate_dim, activation='relu', name='hg'+str(i))(H)
     Yh = Dense(original_dim, name='Yh')(H)
 
@@ -27,7 +27,7 @@ def build_discriminator(batch_size, original_dim, intermediate_dims, optimizer):
     Y = Input(batch_shape=(batch_size, original_dim), name='Y')
     H = Y
     intermediate_dims = intermediate_dims if intermediate_dims is not None else []
-    for intermediate_dim in intermediate_dims:
+    for i, intermediate_dim in enumerate(intermediate_dims):
         H = Dense(intermediate_dim, activation='relu', name='hg'+str(i))(H)
     P = Dense(1, activation='sigmoid', name='P')(H)
 
@@ -40,6 +40,6 @@ def build_combined(batch_size, latent_dim, gen_model, disc_model, optimizer):
     Yh = gen_model(Z)
     disc_model.trainable = False
     P = disc_model(Yh)
-    mdl = Model(Y, P)
+    mdl = Model(Z, P)
     mdl.compile(optimizer=optimizer, loss='binary_crossentropy')
     return mdl

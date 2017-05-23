@@ -33,7 +33,7 @@ def load_data(fnm):
     Xtr, Xte, Ytr, Yte = train_test_split(X, Y, test_size=0.1)
     return Xtr, Xte, Ytr, Yte
 
-def train_on_batch(Xtr, batch_index, batch_size, latent_size):
+def train_on_batch(Xtr, batch_index, batch_size, latent_size, generator, discriminator, combined):
 
     # generate samples
     Zba = sample_noise((batch_size, latent_size))
@@ -53,22 +53,22 @@ def train_on_batch(Xtr, batch_index, batch_size, latent_size):
 
     return batch_disc_loss, batch_gen_loss
 
-def evaluate(Xte, latent_size):
+def evaluate(Xte, batch_size, latent_size, generator, discriminator, combined):
     """
     same as train_on_batch only now we evaluate
     """
     ntest = Xte.shape[0]
 
     Zte = sample_noise((ntest, latent_size))
-    Xte_hat = generator.predict(Zte, verbose=False)
+    Xte_hat = generator.predict(Zte, verbose=False, batch_size=batch_size)
 
     X = np.concatenate((Xte, Xte_hat))
     y = np.array([1]*ntest + [0]*ntest)
-    test_disc_loss = discriminator.evaluate(X, y, verbose=False)
+    test_disc_loss = discriminator.evaluate(X, y, verbose=False, batch_size=2*batch_size)
 
     Zte = sample_noise((2*ntest, latent_size))
     yhope = np.ones(2*ntest)
-    test_gen_loss = combined.evaluate(Zte, yhope, verbose=False)
+    test_gen_loss = combined.evaluate(Zte, yhope, verbose=False, batch_size=2*batch_size)
 
     return test_disc_loss, test_gen_loss
 
@@ -79,15 +79,15 @@ def get_filenames(model_dir, run_name):
     return fnm_gen, fnm_disc, fnm_hist
 
 def print_history(history):
-    ROW_FMT = '{0:<22s} | {1:<4.2f} | {2:<15.2f} | {3:<5.2f}'
+    ROW_FMT = '{0:<22s} | {1:<4.2f}'# | {2:<15.2f} | {3:<5.2f}'
     print(ROW_FMT.format('generator (train)',
-        *history['train']['generator'][-1]))
+        history['train']['generator'][-1]))
     print(ROW_FMT.format('generator (test)',
-        *history['test']['generator'][-1]))
+        history['test']['generator'][-1]))
     print(ROW_FMT.format('discriminator (train)',
-        *history['train']['discriminator'][-1]))
+        history['train']['discriminator'][-1]))
     print(ROW_FMT.format('discriminator (test)',
-        *history['test']['discriminator'][-1]))
+        history['test']['discriminator'][-1]))
     return history
 
 def update_history(history, train_loss, test_loss, do_print=True):
@@ -110,11 +110,12 @@ def save_history(fnm, history):
         pickle.dump(history, f)
 
 def train(run_name, nepochs, batch_size, latent_dim,
-    optimizer, data_file, gen_intermediate_dims=None,
+    optimizer, model_dir, data_file, gen_intermediate_dims=None,
     disc_intermediate_dims=None):
 
     # load data and params
     Xtr, Xte, _, _ = load_data(data_file)
+    Xte = Xte[:(Xte.shape[0]/batch_size)*batch_size] # correct for batch_size
     original_dim = Xtr.shape[-1]
     nbatches = int(Xtr.shape[0]/batch_size)
     fnm_gen, fnm_disc, fnm_hist = get_filenames(model_dir, run_name)
@@ -122,9 +123,9 @@ def train(run_name, nepochs, batch_size, latent_dim,
     # load models
     generator = build_generator(batch_size, latent_dim,
         gen_intermediate_dims, original_dim, optimizer)
-    discriminator = build_discriminator(batch_size, original_dim,
+    discriminator = build_discriminator(2*batch_size, original_dim,
         disc_intermediate_dims, optimizer)
-    combined = build_combined(batch_size, latent_dim,
+    combined = build_combined(2*batch_size, latent_dim,
         generator, discriminator, optimizer)
 
     # train and test
@@ -137,12 +138,12 @@ def train(run_name, nepochs, batch_size, latent_dim,
         epoch_losses = []
         for j in xrange(nbatches):
             progress_bar.update(j)
-            batch_loss = train_on_batch(Xtr, batch_index, batch_size, latent_size)
+            batch_loss = train_on_batch(Xtr, j, batch_size, latent_dim, generator, discriminator, combined)
             epoch_losses.append(batch_loss)
 
         # evaluate on test data
         print('\nTesting epoch {}:'.format(i + 1))
-        test_loss = evaluate(Xte, latent_size)
+        test_loss = evaluate(Xte, batch_size, latent_dim, generator, discriminator, combined)
         train_loss = np.mean(np.array(epoch_losses), axis=0)
         history = update_history(history, train_loss, test_loss, do_print=True)
 
@@ -159,9 +160,9 @@ if __name__ == '__main__':
                 help='tag for current run')
     parser.add_argument('--num_epochs', type=int, default=200,
                 help='number of epochs')
-    parser.add_argument('--batch_size', type=int, default=100,
+    parser.add_argument('--batch_size', type=int, default=10,
                 help='batch size')
-    parser.add_argument('--latent_dim', type=int, default=4,
+    parser.add_argument('--latent_dim', type=int, default=2,
                 help='latent dim')
     parser.add_argument('--gen_intermediate_dim', type=int, default=4,
                 help='generator intemediate dim')
@@ -176,4 +177,4 @@ if __name__ == '__main__':
                 default='data/input/20120525.mat',
                 help='file of training data (.mat)')
     args = parser.parse_args()
-    train(args.run_name, args.num_epochs, args.batch_size, args.latent_dim, args.optimizer, args.train_file, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
+    train(args.run_name, args.num_epochs, args.batch_size, args.latent_dim, args.optimizer, args.model_dir, args.train_file, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
