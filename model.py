@@ -2,8 +2,11 @@ import numpy as np
 from keras.layers import Input, Dense
 from keras.models import Model
 
-def sample_noise(shape):
-    return np.random.uniform(-1, 1, shape)
+def sample_noise(shape, noise_type):
+    if noise_type == 'uniform':
+        return np.random.uniform(-1, 1, shape)
+    elif noise_type == 'normal':
+        return np.random.normal(0, 1, shape)
 
 def build_generator(batch_size, latent_dim, intermediate_dims, original_dim, optimizer):
     """

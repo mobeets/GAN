@@ -10,7 +10,7 @@ from model import build_generator, build_discriminator, build_combined, sample_n
 from keras.datasets import mnist
 from PIL import Image
 
-def load_data(fnm):
+def load_data(fnm, digit=None):
     (X_train, y_train), (X_test, y_test) = mnist.load_data()
     X_train = (X_train.astype(np.float32) - 127.5) / 127.5
     X_test = (X_test.astype(np.float32) - 127.5) / 127.5
@@ -21,26 +21,32 @@ def load_data(fnm):
     X_test = X_test.reshape((len(X_test), nd))
     
     # only fit a single digit
-    ix_tr = y_train == 2
-    ix_te = y_test == 2
-    # return X_train, X_test, y_train, y_test
-    return X_train[ix_tr], X_test[ix_te], y_train[ix_tr], y_test[ix_te]
+    if digit is not None:
+        ix_tr = y_train == 2
+        ix_te = y_test == 2
+        return X_train[ix_tr], X_test[ix_te], y_train[ix_tr], y_test[ix_te]
+    else:
+        return X_train, X_test, y_train, y_test
 
-def train_on_batch(Xtr, batch_index, batch_size, latent_size, generator, discriminator, combined):
+def train_on_batch(Xtr, batch_index, batch_size, latent_size, noise_type, k, generator, discriminator, combined):
 
     # generate samples
-    Zba = sample_noise((batch_size, latent_size))
+    Zba = sample_noise((batch_size, latent_size), noise_type)
     Xba_hat = generator.predict(Zba, verbose=False)
 
     # train discriminator to tell apart true and fake samples
     Xba = Xtr[batch_index * batch_size:(batch_index + 1) * batch_size]
     X = np.concatenate((Xba, Xba_hat))
     y = np.array([1] * batch_size + [0] * batch_size)
-    batch_disc_loss = discriminator.train_on_batch(X, y)
+    if batch_index % k == 0:
+        # only train discriminator every k batches
+        batch_disc_loss = discriminator.train_on_batch(X, y)
+    else:
+        batch_disc_loss = 0.0
 
     # train generator to fool discriminator
     #   n.b. want generator to get same # of samples as discriminator
-    Zba = sample_noise((2*batch_size, latent_size))
+    Zba = sample_noise((2*batch_size, latent_size), noise_type)
     yhope = np.ones(2 * batch_size) # hope they all look like true samples
     batch_gen_loss = combined.train_on_batch(Zba, yhope)
 
@@ -50,20 +56,20 @@ def save_image(X, nrows, fnm):
     img = (np.concatenate([r.reshape(-1, 28)for r in np.split(X, nrows)], axis=-1) * 127.5 + 127.5).astype(np.uint8)
     Image.fromarray(img).save(fnm)
 
-def evaluate(Xte, batch_size, latent_size, generator, discriminator, combined, fnm_samp):
+def evaluate(Xte, batch_size, latent_size, noise_type, generator, discriminator, combined, fnm_samp):
     """
     same as train_on_batch only now we evaluate
     """
     ntest = Xte.shape[0]
 
-    Zte = sample_noise((ntest, latent_size))
+    Zte = sample_noise((ntest, latent_size), noise_type)
     Xte_hat = generator.predict(Zte, verbose=False, batch_size=batch_size)
 
     X = np.concatenate((Xte, Xte_hat))
     y = np.array([1]*ntest + [0]*ntest)
     test_disc_loss = discriminator.evaluate(X, y, verbose=False, batch_size=2*batch_size)
 
-    Zte = sample_noise((2*ntest, latent_size))
+    Zte = sample_noise((2*ntest, latent_size), noise_type)
     yhope = np.ones(2*ntest)
     test_gen_loss = combined.evaluate(Zte, yhope, verbose=False, batch_size=2*batch_size)
 
@@ -109,12 +115,12 @@ def save_history(fnm, history):
     with open(fnm, 'w') as f:
         pickle.dump(history, f)
 
-def train(run_name, nepochs, batch_size, latent_dim,
+def train(run_name, digit, nepochs, batch_size, latent_dim, noise_type, k,
     optimizer, model_dir, data_file, gen_intermediate_dims=None,
     disc_intermediate_dims=None):
 
     # load data and params
-    Xtr, Xte, _, _ = load_data(data_file)
+    Xtr, Xte, _, _ = load_data(data_file, digit)
     Xte = Xte[:(Xte.shape[0]/batch_size)*batch_size] # correct for batch_size
     original_dim = Xtr.shape[-1]
     nbatches = int(Xtr.shape[0]/batch_size)
@@ -138,12 +144,12 @@ def train(run_name, nepochs, batch_size, latent_dim,
         epoch_losses = []
         for j in xrange(nbatches):
             progress_bar.update(j)
-            batch_loss = train_on_batch(Xtr, j, batch_size, latent_dim, generator, discriminator, combined)
+            batch_loss = train_on_batch(Xtr, j, batch_size, latent_dim, noise_type, k, generator, discriminator, combined)
             epoch_losses.append(batch_loss)
 
         # evaluate on test data
         print('\nTesting epoch {}:'.format(i + 1))
-        test_loss = evaluate(Xte, batch_size, latent_dim, generator, discriminator, combined, fnm_samp.format(i+1))
+        test_loss = evaluate(Xte, batch_size, latent_dim, noise_type, generator, discriminator, combined, fnm_samp.format(i+1))
         train_loss = np.mean(np.array(epoch_losses), axis=0)
         history = update_history(history, train_loss, test_loss, do_print=True)
 
@@ -164,12 +170,19 @@ if __name__ == '__main__':
                 help='batch size')
     parser.add_argument('--latent_dim', type=int, default=2,
                 help='latent dim')
+    parser.add_argument('--digit', type=int, default=2,
+                help='which digit to train on (0-9)')
+    parser.add_argument('-k', type=int, default=2,
+                help='train discriminator every k batches')
     parser.add_argument('--gen_intermediate_dim', type=int, default=4,
                 help='generator intemediate dim')
     parser.add_argument('--disc_intermediate_dim', type=int, default=4,
                 help='discriminator intemediate dim')
     parser.add_argument('--optimizer', type=str, default='adam',
                 help='optimizer name') # 'rmsprop'
+    parser.add_argument('--noise', type=str, default='normal',
+                choices=['normal', 'uniform'],
+                help='noise distribution') # 'rmsprop'
     parser.add_argument('--model_dir', type=str,
                 default='data/models',
                 help='basedir for saving model weights')
@@ -177,4 +190,4 @@ if __name__ == '__main__':
                 default='data/input/20120525.mat',
                 help='file of training data (.mat)')
     args = parser.parse_args()
-    train(args.run_name, args.num_epochs, args.batch_size, args.latent_dim, args.optimizer, args.model_dir, args.train_file, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
+    train(args.run_name, args.digit, args.num_epochs, args.batch_size, args.latent_dim, args.noise, args.k, args.optimizer, args.model_dir, args.train_file, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
