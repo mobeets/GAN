@@ -14,7 +14,7 @@ def build_generator(batch_size, latent_dim, intermediate_dims, original_dim, opt
     intermediate_dims = intermediate_dims if intermediate_dims is not None else []
     for i, intermediate_dim in enumerate(intermediate_dims):
         H = Dense(intermediate_dim, activation='relu', name='hg'+str(i))(H)
-    Yh = Dense(original_dim, name='Yh')(H)
+    Yh = Dense(original_dim, activation='tanh', name='Yh')(H)
 
     mdl = Model(Z, Yh)
     mdl.compile(optimizer=optimizer, loss='binary_crossentropy')

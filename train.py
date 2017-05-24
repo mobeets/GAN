@@ -3,35 +3,28 @@ import os.path
 import pickle
 import argparse
 import numpy as np
-from scipy.io import loadmat
 from sklearn.model_selection import train_test_split
 from keras.utils.generic_utils import Progbar
 from model import build_generator, build_discriminator, build_combined, sample_noise
 
-# def ldiv(A, b):
-#     return np.linalg.lstsq(A,b)[0]
-
-# def cursor_mats(A, B, c):
-#     """
-#     BCI: v_t = A v_{t-1} + B y + c
-#     This function assumes for simplicity that v_{t-1} = v_t
-
-#     returns matrices D, d such that v_t = Dy + d
-#     """
-#     D = ldiv(np.eye(A.shape[0]) - A, B)
-#     d = ldiv(np.eye(A.shape[0]) - A, c)
-#     return D, d
-
-# def cursor_loss(v, vpred):
-#     pass
+from keras.datasets import mnist
+from PIL import Image
 
 def load_data(fnm):
-    D = loadmat(fnm, struct_as_record=False)
-    B = D['F'][0,0].train[0,0]
-    X = B.latents
-    Y = B.thetas
-    Xtr, Xte, Ytr, Yte = train_test_split(X, Y, test_size=0.1)
-    return Xtr, Xte, Ytr, Yte
+    (X_train, y_train), (X_test, y_test) = mnist.load_data()
+    X_train = (X_train.astype(np.float32) - 127.5) / 127.5
+    X_test = (X_test.astype(np.float32) - 127.5) / 127.5
+
+    # reshape from (n, 28,28) to (n, 28*28)
+    nd = X_train.shape[1]*X_train.shape[2]
+    X_train = X_train.reshape((len(X_train), nd))
+    X_test = X_test.reshape((len(X_test), nd))
+    
+    # only fit a single digit
+    ix_tr = y_train == 2
+    ix_te = y_test == 2
+    # return X_train, X_test, y_train, y_test
+    return X_train[ix_tr], X_test[ix_te], y_train[ix_tr], y_test[ix_te]
 
 def train_on_batch(Xtr, batch_index, batch_size, latent_size, generator, discriminator, combined):
 
@@ -53,7 +46,11 @@ def train_on_batch(Xtr, batch_index, batch_size, latent_size, generator, discrim
 
     return batch_disc_loss, batch_gen_loss
 
-def evaluate(Xte, batch_size, latent_size, generator, discriminator, combined):
+def save_image(X, nrows, fnm):
+    img = (np.concatenate([r.reshape(-1, 28)for r in np.split(X, nrows)], axis=-1) * 127.5 + 127.5).astype(np.uint8)
+    Image.fromarray(img).save(fnm)
+
+def evaluate(Xte, batch_size, latent_size, generator, discriminator, combined, fnm_samp):
     """
     same as train_on_batch only now we evaluate
     """
@@ -70,13 +67,16 @@ def evaluate(Xte, batch_size, latent_size, generator, discriminator, combined):
     yhope = np.ones(2*ntest)
     test_gen_loss = combined.evaluate(Zte, yhope, verbose=False, batch_size=2*batch_size)
 
+    save_image(Xte_hat[:100], 10, fnm_samp)
+
     return test_disc_loss, test_gen_loss
 
 def get_filenames(model_dir, run_name):
     fnm_gen = os.path.join(model_dir, run_name + '_gen_{0:03d}.h5')
     fnm_disc = os.path.join(model_dir, run_name + '_disc_{0:03d}.h5')
     fnm_hist = os.path.join(model_dir, run_name + '_history.pickle')
-    return fnm_gen, fnm_disc, fnm_hist
+    fnm_samp = os.path.join(model_dir, run_name + '_samp_{0:03d}.png')
+    return fnm_gen, fnm_disc, fnm_hist, fnm_samp
 
 def print_history(history):
     ROW_FMT = '{0:<22s} | {1:<4.2f}'# | {2:<15.2f} | {3:<5.2f}'
@@ -118,7 +118,7 @@ def train(run_name, nepochs, batch_size, latent_dim,
     Xte = Xte[:(Xte.shape[0]/batch_size)*batch_size] # correct for batch_size
     original_dim = Xtr.shape[-1]
     nbatches = int(Xtr.shape[0]/batch_size)
-    fnm_gen, fnm_disc, fnm_hist = get_filenames(model_dir, run_name)
+    fnm_gen, fnm_disc, fnm_hist, fnm_samp = get_filenames(model_dir, run_name)
 
     # load models
     generator = build_generator(batch_size, latent_dim,
@@ -143,13 +143,13 @@ def train(run_name, nepochs, batch_size, latent_dim,
 
         # evaluate on test data
         print('\nTesting epoch {}:'.format(i + 1))
-        test_loss = evaluate(Xte, batch_size, latent_dim, generator, discriminator, combined)
+        test_loss = evaluate(Xte, batch_size, latent_dim, generator, discriminator, combined, fnm_samp.format(i+1))
         train_loss = np.mean(np.array(epoch_losses), axis=0)
         history = update_history(history, train_loss, test_loss, do_print=True)
 
         # save weights
         generator.save_weights(fnm_gen.format(i), True)
-        discriminator.save_weights(fnm_disc.format(i), True)
+        discriminator.save_weights(fnm_disc.format(i), True)        
 
     # save history    
     save_history(fnm_hist, history)
