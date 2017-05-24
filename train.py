@@ -3,14 +3,14 @@ import os.path
 import pickle
 import argparse
 import numpy as np
-from sklearn.model_selection import train_test_split
 from keras.utils.generic_utils import Progbar
 from model import build_generator, build_discriminator, build_combined, sample_noise
 
 from keras.datasets import mnist
 from PIL import Image
 
-def load_data(fnm, digit=None):
+def load_data(digit=None):
+    # normalize between -1 and 1
     (X_train, y_train), (X_test, y_test) = mnist.load_data()
     X_train = (X_train.astype(np.float32) - 127.5) / 127.5
     X_test = (X_test.astype(np.float32) - 127.5) / 127.5
@@ -35,11 +35,11 @@ def train_on_batch(Xtr, batch_index, batch_size, latent_size, noise_type, k, gen
     Xba_hat = generator.predict(Zba, verbose=False)
 
     # train discriminator to tell apart true and fake samples
-    Xba = Xtr[batch_index * batch_size:(batch_index + 1) * batch_size]
-    X = np.concatenate((Xba, Xba_hat))
-    y = np.array([1] * batch_size + [0] * batch_size)
     if batch_index % k == 0:
         # only train discriminator every k batches
+        Xba = Xtr[batch_index * batch_size:(batch_index + 1) * batch_size]
+        X = np.concatenate((Xba, Xba_hat))
+        y = np.array([1] * batch_size + [0] * batch_size)
         batch_disc_loss = discriminator.train_on_batch(X, y)
     else:
         batch_disc_loss = 0.0
@@ -116,11 +116,11 @@ def save_history(fnm, history):
         pickle.dump(history, f)
 
 def train(run_name, digit, nepochs, batch_size, latent_dim, noise_type, k,
-    optimizer, model_dir, data_file, gen_intermediate_dims=None,
+    optimizer, model_dir, gen_intermediate_dims=None,
     disc_intermediate_dims=None):
 
     # load data and params
-    Xtr, Xte, _, _ = load_data(data_file, digit)
+    Xtr, Xte, _, _ = load_data(digit)
     Xte = Xte[:(Xte.shape[0]/batch_size)*batch_size] # correct for batch_size
     original_dim = Xtr.shape[-1]
     nbatches = int(Xtr.shape[0]/batch_size)
@@ -186,8 +186,5 @@ if __name__ == '__main__':
     parser.add_argument('--model_dir', type=str,
                 default='data/models',
                 help='basedir for saving model weights')
-    parser.add_argument('--train_file', type=str,
-                default='data/input/20120525.mat',
-                help='file of training data (.mat)')
     args = parser.parse_args()
-    train(args.run_name, args.digit, args.num_epochs, args.batch_size, args.latent_dim, args.noise, args.k, args.optimizer, args.model_dir, args.train_file, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
+    train(args.run_name, args.digit, args.num_epochs, args.batch_size, args.latent_dim, args.noise, args.k, args.optimizer, args.model_dir, [args.gen_intermediate_dim], [args.disc_intermediate_dim])
